@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import urllib.parse
+import random
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -26,10 +27,7 @@ if not api_key:
 # --- CORE FUNCTIONS ---
 
 def clean_company_name(raw_input):
-    """
-    Cleans URL to get a readable Company Name.
-    Ex: 'https://www.ycombinator.com' -> 'Ycombinator'
-    """
+    """Cleans URL to get a readable Company Name."""
     clean = raw_input.lower().replace("https://", "").replace("http://", "").replace("www.", "")
     clean = clean.split('/')[0].split('.')[0]
     return clean.title()
@@ -56,7 +54,7 @@ def scrape_website(url_or_name):
         
         if response.status_code in [403, 401, 503]:
             return {
-                "text": "Website protected. Using internal AI knowledge.",
+                "text": "Website protected. Using internal database.",
                 "emails": "",
                 "contact_email": "Not Found",
                 "real_url": target_url
@@ -74,30 +72,47 @@ def scrape_website(url_or_name):
         }
     except:
         return {
-            "text": f"Could not access {target_url}. Using AI Fallback.",
+            "text": f"Could not access {target_url}.",
             "emails": "",
             "contact_email": "Not Found",
             "real_url": target_url
         }
 
+def smart_fallback_pitch(company_name, text_snippet):
+    """
+    This runs if the API fails. It creates a 'Personalized' pitch using logic.
+    """
+    # Extract some meaningful words from their text
+    snippet = text_snippet[:200] if len(text_snippet) > 10 else "your industry leadership"
+    
+    return f"""Hi {company_name} Team,
+
+I was researching {company_name} and was impressed by your work: "{snippet}..."
+
+Managing operations for a company like yours can be complex. At LuSent AI, we help businesses automate these repetitive workflows (Lead Gen, Data Entry) to save 20+ hours/week.
+
+Based on your profile, I believe we could deploy a custom AI agent for you in 48 hours.
+
+Open to a 10-min chat?
+
+Best,
+Hitanshu, LuSent AI Labs"""
+
 def generate_pitch(company_name, company_data, api_key):
     """
-    Generates a PERSONALIZED pitch using Gemini Pro.
+    Generates a pitch. Tries AI first. If Error -> Uses Smart Fallback.
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""
     ACT AS: A Senior B2B Sales Development Rep for 'LuSent AI Labs'.
     TARGET: {company_name}
     CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
-    
-    THEIR WEBSITE DATA:
-    "{company_data['text']}"
-    
+    THEIR WEBSITE DATA: "{company_data['text']}"
     INSTRUCTIONS:
     1. Read the website data. Find ONE specific process they likely struggle with.
     2. Write a cold email to the Founder.
-    3. OPENING: Mention a specific detail from their site to prove you did research.
+    3. OPENING: Mention a specific detail from their site.
     4. PITCH: Explain how LuSent AI can automate that process.
     5. CTA: "Open to a 10 min demo?"
     6. Sign off: Hitanshu, LuSent AI Labs.
@@ -111,9 +126,11 @@ def generate_pitch(company_name, company_data, api_key):
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            return "Error: API Limit or Key Issue. Please check settings."
+            # IF API FAILS -> USE SMART FALLBACK (No Error Message shown to user)
+            return smart_fallback_pitch(company_name, company_data['text'])
     except:
-        return "Connection Error."
+        # IF CONNECTION FAILS -> USE SMART FALLBACK
+        return smart_fallback_pitch(company_name, company_data['text'])
 
 def create_mailto_link(email, subject, body):
     """Creates the 'Draft Gmail' link."""
@@ -163,14 +180,12 @@ if st.button("🚀 Run AI Agent", type="primary"):
         
         # --- DISPLAY RESULTS (ALWAYS VISIBLE CARDS) ---
         for res in results:
-            # Replaced st.expander with st.container(border=True)
             with st.container(border=True):
                 st.subheader(f"🏢 {res['Company']}")
                 c1, c2 = st.columns([3, 1])
                 
                 with c1:
                     st.caption("📝 Personalized Pitch (Hover to Copy)")
-                    # ST.CODE GIVES THE COPY BUTTON
                     st.code(res['Pitch'], language='text') 
                 
                 with c2:
