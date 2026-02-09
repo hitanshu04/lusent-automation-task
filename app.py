@@ -41,7 +41,6 @@ def extract_emails(text):
     emails = re.findall(email_pattern, text)
     return list(set(emails))
 
-# === BONUS 2: ERROR HANDLING ===
 def scrape_website(url_or_name):
     """Scrapes URL. Handles errors gracefully."""
     target_url = url_or_name
@@ -56,7 +55,7 @@ def scrape_website(url_or_name):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(target_url, headers=headers, timeout=10)
         
-        # If blocked, return specific flag instead of crashing
+        # If blocked, return specific flag
         if response.status_code in [403, 401, 503]:
             return {"text": "PROTECTED_MODE", "emails": "", "contact_email": "Not Found", "real_url": target_url}
             
@@ -76,44 +75,56 @@ def scrape_website(url_or_name):
             "real_url": target_url
         }
     except:
-        # Error Handling: Return generic data so app continues
         return {"text": "PROTECTED_MODE", "emails": "", "contact_email": "Not Found", "real_url": target_url}
 
 def generate_pitch(company_name, company_data):
     """
     Uses Groq (Llama 3.3).
+    SMART LOGIC: Dynamically decides the 'Pain Point' based on the company type.
     """
+    
     # CASE 1: Website Scraped Successfully
     if company_data['text'] != "PROTECTED_MODE":
         prompt = f"""
         ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
         TARGET: {company_name}
-        CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
+        CONTEXT: We sell Custom AI Automation (NOT just Lead Gen. We automate Operations, Support, Hiring, Logistics).
         WEBSITE DATA: "{company_data['text'][:3000]}"
         
-        STRICT RULES:
-        1. Output ONLY the email body. NO Subject. NO "Here is the email".
-        2. Start with "Hi {company_name} Team,".
-        3. Mention a specific detail from the WEBSITE DATA.
-        4. Pitch: "I bet managing [Process] is manual. LuSent AI can automate it."
-        5. CTA: "Open to a 10 min demo?"
-        6. Sign off: Best, Hitanshu, LuSent AI Labs.
-        """
-    
-    # CASE 2: Website Blocked (Error Handling Strategy)
-    else:
-        prompt = f"""
-        ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
-        TARGET: {company_name}
-        CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
-        
-        CRITICAL: Do NOT mention you couldn't access their website.
+        INSTRUCTIONS:
+        1. Analyze the WEBSITE DATA. What does {company_name} actually do?
+        2. Identify ONE specific, expensive operational bottleneck relevant to THEIR industry.
+           - If Logistics/Food -> Pitch Support/Route Optimization.
+           - If VC/Finance -> Pitch Application Screening/Data Analysis.
+           - If Manufacturing -> Pitch Supply Chain/Internal Ops.
+        3. Write a cold email to the Founder.
         
         STRICT RULES:
         1. Output ONLY the email body. NO Subject.
         2. Start with "Hi {company_name} Team,".
-        3. Say: "I've been following {company_name}'s growth in the industry."
-        4. Pitch: "Scaling operations often brings manual bottlenecks. LuSent AI automates workflows to save 20+ hours/week."
+        3. Mention a specific detail from their site (Prove you read it).
+        4. Pitch: "I imagine [Specific Process] is manual/complex for you. LuSent AI can automate it."
+        5. CTA: "Open to a 10 min demo?"
+        6. Sign off: Best, Hitanshu, LuSent AI Labs.
+        """
+    
+    # CASE 2: Website Blocked (Smart Guessing)
+    else:
+        prompt = f"""
+        ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
+        TARGET: {company_name}
+        CONTEXT: We sell Custom AI Automation.
+        
+        INSTRUCTIONS:
+        1. Use your internal knowledge to identify what {company_name} does.
+        2. Pick a relevant bottleneck (e.g. Tesla -> Manufacturing/Support, Swiggy -> Rider Support).
+        3. Do NOT mention you couldn't access their website.
+        
+        STRICT RULES:
+        1. Output ONLY the email body. NO Subject.
+        2. Start with "Hi {company_name} Team,".
+        3. Say: "I've been following {company_name}'s leadership in the industry."
+        4. Pitch: "Scaling [Specific Industry Process] often brings bottlenecks. LuSent AI automates workflows to save 20+ hours/week."
         5. CTA: "Open to a 10 min demo?"
         6. Sign off: Best, Hitanshu, LuSent AI Labs.
         """
@@ -189,7 +200,7 @@ if st.button("🚀 Run AI Agent", type="primary"):
                     st.write(f"**Email:** {res['Email']}")
                     st.link_button("📤 Draft Gmail", res['Link'])
         
-        # === BONUS 1: CSV EXPORT (Fixed for Excel) ===
+        # === BONUS 1: CSV EXPORT ===
         df = pd.DataFrame(results).drop(columns=['Link'])
         
         # CLEANING: Replace Newlines with ' || ' so it stays in one cell in Excel
