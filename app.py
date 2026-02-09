@@ -4,10 +4,14 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import re
 import urllib.parse
-from groq import Groq  # Groq client import
+from groq import Groq
 
 # --- PAGE CONFIGURATION ---
-st.set_page_config(page_title="LuSent AI - Automation Agent", page_icon="🤖", layout="wide")
+st.set_page_config(
+    page_title="LuSent AI - Automation Agent",
+    page_icon="🤖",
+    layout="wide"
+)
 
 # --- SIDEBAR ---
 st.sidebar.title("⚙️ Configuration")
@@ -26,17 +30,22 @@ client = Groq(api_key=api_key)
 # --- CORE FUNCTIONS ---
 
 def clean_company_name(raw_input):
+    """Cleans URL to get a readable Company Name."""
     clean = raw_input.lower().replace("https://", "").replace("http://", "").replace("www.", "")
     clean = clean.split('/')[0].split('.')[0]
     return clean.title()
 
 def extract_emails(text):
+    """Finds emails in text."""
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     emails = re.findall(email_pattern, text)
     return list(set(emails))
 
 def scrape_website(url_or_name):
+    """Scrapes URL. Removes Junk. Handles Blockers."""
     target_url = url_or_name
+    
+    # Smart Guesser
     if "." not in target_url and " " not in target_url:
         target_url = f"https://www.{target_url.lower()}.com"
     elif not target_url.startswith('http'):
@@ -50,7 +59,9 @@ def scrape_website(url_or_name):
             return {"text": "Website Protected.", "emails": "", "contact_email": "Not Found", "real_url": target_url}
             
         soup = BeautifulSoup(response.content, 'html.parser')
-        for element in soup(['nav', 'header', 'footer', 'script', 'style']):
+        
+        # REMOVE JUNK (Menus, Footers)
+        for element in soup(['nav', 'header', 'footer', 'script', 'style', 'aside']):
             element.decompose()
             
         text = soup.get_text(separator=' ', strip=True)[:6000]
@@ -67,7 +78,7 @@ def scrape_website(url_or_name):
 
 def generate_pitch(company_name, company_data):
     """
-    Uses Groq (Llama 3) - Extremely fast and reliable on Cloud.
+    Uses Groq (Llama 3.3) - The NEWEST model.
     """
     prompt = f"""
     ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
@@ -88,13 +99,15 @@ def generate_pitch(company_name, company_data):
     try:
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            model="llama3-8b-8192", # Free and Fast model
+            # UPDATED MODEL NAME HERE:
+            model="llama-3.3-70b-versatile", 
         )
         return completion.choices[0].message.content
     except Exception as e:
         return f"Error: {str(e)}"
 
 def create_mailto_link(email, subject, body):
+    """Creates a clickable mailto link."""
     if email == "Not Found": email = ""
     params = {"view": "cm", "fs": "1", "to": email, "su": subject, "body": body}
     return f"https://mail.google.com/mail/u/0/?{urllib.parse.urlencode(params)}"
@@ -121,9 +134,14 @@ if st.button("🚀 Run AI Agent", type="primary"):
         prog = st.progress(0)
         
         for i, item in enumerate(inputs):
+            # 1. Scrape
             data = scrape_website(item)
             name = clean_company_name(item)
+            
+            # 2. Pitch
             pitch = generate_pitch(name, data)
+            
+            # 3. Link
             link = create_mailto_link(data['contact_email'], f"AI for {name}", pitch)
             
             results.append({
@@ -137,6 +155,7 @@ if st.button("🚀 Run AI Agent", type="primary"):
             
         st.success("✅ Done!")
         
+        # Display Results
         for res in results:
             with st.container(border=True):
                 st.subheader(f"🏢 {res['Company']}")
@@ -149,6 +168,7 @@ if st.button("🚀 Run AI Agent", type="primary"):
                     st.write(f"**Email:** {res['Email']}")
                     st.link_button("📤 Draft Gmail", res['Link'])
         
+        # CSV Export
         df = pd.DataFrame(results).drop(columns=['Link'])
         df['Pitch'] = df['Pitch'].apply(lambda x: x.replace('\n', '  '))
         st.download_button("📥 Download CSV", df.to_csv(index=False).encode('utf-8'), "lusent_leads.csv")
