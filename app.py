@@ -54,13 +54,16 @@ def scrape_website(url_or_name):
         
         if response.status_code in [403, 401, 503]:
             return {
-                "text": "Website protected. Using internal database.",
+                "text": "Website protected.",
                 "emails": "",
                 "contact_email": "Not Found",
                 "real_url": target_url
             }
             
         soup = BeautifulSoup(response.content, 'html.parser')
+        # Get text but skip scripts and styles
+        for script in soup(["script", "style"]):
+            script.decompose()
         text = soup.get_text(separator=' ', strip=True)[:5000]
         emails = extract_emails(text)
         
@@ -72,7 +75,7 @@ def scrape_website(url_or_name):
         }
     except:
         return {
-            "text": f"Could not access {target_url}.",
+            "text": "Could not access website.",
             "emails": "",
             "contact_email": "Not Found",
             "real_url": target_url
@@ -80,16 +83,20 @@ def scrape_website(url_or_name):
 
 def smart_fallback_pitch(company_name, text_snippet):
     """
-    This runs if the API fails. It creates a 'Personalized' pitch using logic.
+    Creates a cleaner fallback pitch by finding REAL sentences, not menus.
     """
-    # Extract some meaningful words from their text
-    snippet = text_snippet[:200] if len(text_snippet) > 10 else "your industry leadership"
+    # 1. Skip the first 500 chars (usually navigation menus)
+    useful_text = text_snippet[500:] if len(text_snippet) > 500 else text_snippet
+    
+    # 2. Find the first nice sentence (ending in .)
+    match = re.search(r'([A-Z][^\.]{10,100}\.)', useful_text)
+    snippet = match.group(1) if match else "your industry leadership"
     
     return f"""Hi {company_name} Team,
 
-I was researching {company_name} and was impressed by your work: "{snippet}..."
+I was researching {company_name} and was impressed by your work: "{snippet}"
 
-Managing operations for a company like yours can be complex. At LuSent AI, we help businesses automate these repetitive workflows (Lead Gen, Data Entry) to save 20+ hours/week.
+Managing operations for a company like yours can be complex. At LuSent AI, we help businesses automate repetitive workflows (like Lead Gen & Data Entry) to save 20+ hours/week.
 
 Based on your profile, I believe we could deploy a custom AI agent for you in 48 hours.
 
@@ -100,7 +107,7 @@ Hitanshu, LuSent AI Labs"""
 
 def generate_pitch(company_name, company_data, api_key):
     """
-    Generates a pitch. Tries AI first. If Error -> Uses Smart Fallback.
+    Tries GEMINI 1.5 FLASH -> Fallback to SMART TEMPLATE.
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
@@ -110,9 +117,9 @@ def generate_pitch(company_name, company_data, api_key):
     CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
     THEIR WEBSITE DATA: "{company_data['text']}"
     INSTRUCTIONS:
-    1. Read the website data. Find ONE specific process they likely struggle with.
+    1. Find ONE specific pain point they might have based on the text.
     2. Write a cold email to the Founder.
-    3. OPENING: Mention a specific detail from their site.
+    3. OPENING: Mention a specific detail from their site (NOT the menu).
     4. PITCH: Explain how LuSent AI can automate that process.
     5. CTA: "Open to a 10 min demo?"
     6. Sign off: Hitanshu, LuSent AI Labs.
@@ -126,10 +133,9 @@ def generate_pitch(company_name, company_data, api_key):
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            # IF API FAILS -> USE SMART FALLBACK (No Error Message shown to user)
+            # API FAILED -> Use the Cleaner Fallback
             return smart_fallback_pitch(company_name, company_data['text'])
     except:
-        # IF CONNECTION FAILS -> USE SMART FALLBACK
         return smart_fallback_pitch(company_name, company_data['text'])
 
 def create_mailto_link(email, subject, body):
@@ -178,7 +184,7 @@ if st.button("🚀 Run AI Agent", type="primary"):
             
         st.success("✅ Done! Results below:")
         
-        # --- DISPLAY RESULTS (ALWAYS VISIBLE CARDS) ---
+        # --- DISPLAY RESULTS (ALWAYS VISIBLE) ---
         for res in results:
             with st.container(border=True):
                 st.subheader(f"🏢 {res['Company']}")
@@ -193,6 +199,9 @@ if st.button("🚀 Run AI Agent", type="primary"):
                     st.write(f"**Email:** {res['Email']}")
                     st.link_button("📤 Draft Gmail", res['Link'])
 
-        # CSV EXPORT
+        # --- CSV EXPORT FIX (Replaces Enters with Spaces) ---
         df = pd.DataFrame(results).drop(columns=['Link'])
+        # THIS LINE FIXES THE EXCEL ISSUE
+        df['Pitch'] = df['Pitch'].apply(lambda x: x.replace('\n', ' || '))
+        
         st.download_button("📥 Download Report (CSV)", df.to_csv(index=False, encoding='utf-8-sig'), "lusent_leads.csv")
