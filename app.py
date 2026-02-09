@@ -12,194 +12,155 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- SIDEBAR & API KEY (THE GATEKEEPER) ---
+# --- SIDEBAR ---
 st.sidebar.title("⚙️ Configuration")
 st.sidebar.markdown("**Built by Hitanshu Kumar Singh**")
 st.sidebar.info("💡 Automates lead research & outreach.")
 
 api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
 
-# --- STOP EVERYTHING IF NO KEY ---
 if not api_key:
-    st.warning("⬅️ Please enter your Gemini API Key in the sidebar to start the agent.")
-    st.image("https://cdn-icons-png.flaticon.com/512/6146/6146586.png", width=100) # Lock Icon
-    st.stop() 
+    st.warning("⬅️ Please enter your Gemini API Key to start.")
+    st.stop()
 
 # --- CORE FUNCTIONS ---
 
+def clean_company_name(raw_input):
+    """Cleans URL to get a readable Company Name."""
+    clean = raw_input.lower().replace("https://", "").replace("http://", "").replace("www.", "")
+    clean = clean.split('/')[0].split('.')[0]
+    return clean.title()
+
 def extract_emails(text):
-    """Finds emails in text using Regex."""
+    """Finds emails in text."""
     email_pattern = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
     emails = re.findall(email_pattern, text)
     return list(set(emails))
 
 def scrape_website(url_or_name):
-    """
-    Scrapes URL or Guesses URL from Name.
-    """
+    """Scrapes URL or Guesses URL from Name."""
     target_url = url_or_name
     
-    # SMART GUESSER: If input is 'Tesla', try 'https://www.tesla.com'
+    # Smart Guesser
     if "." not in target_url and " " not in target_url:
         target_url = f"https://www.{target_url.lower()}.com"
     elif not target_url.startswith('http'):
         target_url = 'https://' + target_url
 
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-        
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(target_url, headers=headers, timeout=10)
         
         if response.status_code in [403, 401, 503]:
             return {
-                "text": f"Website {target_url} is protected. Analyzed domain.",
+                "text": "Website protected. Using internal AI knowledge.",
                 "emails": "",
                 "contact_email": "Not Found",
-                "source": "Protected_Site",
                 "real_url": target_url
             }
             
         soup = BeautifulSoup(response.content, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)[:4000]
+        text = soup.get_text(separator=' ', strip=True)[:5000]
         emails = extract_emails(text)
         
         return {
             "text": text,
             "emails": ", ".join(emails),
             "contact_email": emails[0] if emails else "Not Found",
-            "source": "Scraped",
             "real_url": target_url
         }
-        
-    except Exception as e:
+    except:
         return {
-            "text": f"Could not access automatically. User Input: {url_or_name}.",
+            "text": f"Could not access {target_url}. Using AI Fallback.",
             "emails": "",
             "contact_email": "Not Found",
-            "source": "Manual_Fallback",
             "real_url": target_url
         }
 
 def generate_pitch(company_name, company_data, api_key):
     """
-    Tries AI. If AI fails (Quota/Error), uses a High-Quality Template (Fail-Safe).
+    Generates a PERSONALIZED pitch using Gemini Pro.
+    Focus: 'How LuSent AI helps [Company Name]'.
     """
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
     
     prompt = f"""
-    Write a cold email to {company_name}.
-    My Company: LuSent AI (We sell AI Automation).
-    Their Data: {company_data['text']}
-    Keep it under 150 words. Punchy.
+    ACT AS: A Senior B2B Sales Development Rep for 'LuSent AI Labs'.
+    TARGET: {company_name}
+    CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
+    
+    THEIR WEBSITE DATA:
+    "{company_data['text']}"
+    
+    INSTRUCTIONS:
+    1. Read the website data. Find ONE specific process they likely struggle with (e.g. support, data entry, hiring).
+    2. Write a cold email to the Founder.
+    3. OPENING: Mention a specific detail from their site (e.g. "Saw you just launched X").
+    4. PITCH: "I bet managing [Process] is time-consuming. LuSent AI can automate that."
+    5. CTA: "Open to a 10 min demo?"
+    6. Sign off: Hitanshu, LuSent AI Labs.
+    7. Keep it under 150 words.
     """
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    # FAIL-SAFE BLOCK
     try:
         response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
-        
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            # If Google errors out (429, 404, etc), trigger the template silently.
-            raise Exception("Google API Error")
-            
-    except Exception:
-        # RETURN THE TEMPLATE (So the user ALWAYS gets a pitch)
-        return f"""Hi {company_name} Team,
-
-I've been following {company_name}'s work and noticed huge potential to streamline your operations with AI.
-
-At LuSent AI, we automate repetitive workflows (like lead research and data entry) to save 20+ hours a week.
-
-Based on your current setup, I believe we could deploy a custom AI agent for you in under 48 hours.
-
-Open to a 10-min demo?
-
-Best,
-Hitanshu
-(LuSent AI Labs)"""
+            return "Error: API Limit or Key Issue. Please check settings."
+    except:
+        return "Connection Error."
 
 def create_mailto_link(email, subject, body):
-    """Creates a clean mailto link."""
-    if email == "Not Found": 
-        email = ""
+    """Creates the 'Draft Gmail' link."""
+    if email == "Not Found": email = ""
     params = {"view": "cm", "fs": "1", "to": email, "su": subject, "body": body}
     return f"https://mail.google.com/mail/u/0/?{urllib.parse.urlencode(params)}"
 
-# --- MAIN UI (Only runs if API Key is present) ---
+# --- MAIN UI ---
 st.title("🤖 LuSent AI | Auto-Outreach Agent")
 
-# Tabs
 tab1, tab2 = st.tabs(["🔗 Single Input", "📂 Bulk Upload"])
-inputs_to_process = []
+inputs = []
 
 with tab1:
-    user_input = st.text_input("Enter Company Name OR URL", placeholder="e.g. Tesla, OpenAI, or https://swiggy.com")
-    if user_input: inputs_to_process.append(user_input)
+    u = st.text_input("Enter Company Name OR URL", placeholder="e.g. Tesla")
+    if u: inputs.append(u)
 
 with tab2:
-    bulk_input = st.text_area("Paste List (One per line)", height=150, placeholder="Tesla\nSwiggy\nhttps://www.zomato.com")
-    if bulk_input: inputs_to_process = [line.strip() for line in bulk_input.split('\n') if line.strip()]
+    b = st.text_area("Paste List (One per line)")
+    if b: inputs = [line.strip() for line in b.split('\n') if line.strip()]
 
 if st.button("🚀 Run AI Agent", type="primary"):
-    if not inputs_to_process:
-        st.error("Please enter at least one company.")
+    if not inputs:
+        st.error("Enter a company first.")
     else:
-        st.info(f"🔄 Processing {len(inputs_to_process)} leads...")
+        st.info(f"🔄 Analyzing {len(inputs)} companies...")
         results = []
-        progress_bar = st.progress(0)
         
-        for i, item in enumerate(inputs_to_process):
-            # 1. Research
+        # PROGRESS BAR
+        prog = st.progress(0)
+        
+        for i, item in enumerate(inputs):
             data = scrape_website(item)
-            
-            # Name Cleaning
-            if "http" in item:
-                company_name = item.replace("https://", "").replace("http://", "").replace("www.", "").split('.')[0].title()
-            else:
-                company_name = item.title()
-            
-            # 2. Generate Pitch (With Fail-Safe)
-            pitch = generate_pitch(company_name, data, api_key)
-            
-            # 3. Email Link
-            subject = f"AI Strategy for {company_name}"
-            email_link = create_mailto_link(data['contact_email'], subject, pitch)
+            name = clean_company_name(item)
+            pitch = generate_pitch(name, data, api_key)
+            link = create_mailto_link(data['contact_email'], f"AI for {name}", pitch)
             
             results.append({
-                "Company": company_name,
-                "Website": data['real_url'],
-                "Contact Email": data['contact_email'],
-                "Generated Pitch": pitch,
-                "Email Link": email_link,
-                "Status": "Success"
+                "Company": name,
+                "URL": data['real_url'],
+                "Email": data['contact_email'],
+                "Pitch": pitch,
+                "Link": link
             })
-            progress_bar.progress((i + 1) / len(inputs_to_process))
+            prog.progress((i + 1) / len(inputs))
             
-        st.success("✅ Analysis Complete!")
+        st.success("✅ Done!")
         
-        # --- DISPLAY RESULTS ---
+        # DISPLAY RESULTS
         for res in results:
-            with st.expander(f"🏢 {res['Company']} (Click for Details)", expanded=True):
+            with st.expander(f"🏢 {res['Company']} (Click to View)", expanded=True):
                 c1, c2 = st.columns([3, 1])
-                
-                with c1:
-                    st.subheader("📝 Personalized Pitch")
-                    st.text_area("Copy Pitch:", value=res['Generated Pitch'], height=200, key=f"p_{res['Company']}")
-                
-                with c2:
-                    st.subheader("⚡ Action")
-                    st.write(f"**Email:** {res['Contact Email']}")
-                    st.write(f"**URL:** {res['Website']}")
-                    st.link_button(f"📤 Draft Gmail", res['Email Link'])
-
-        # --- CSV EXPORT ---
-        df = pd.DataFrame(results)
-        csv_df = df.drop(columns=['Email Link'])
-        csv = csv_df.to_csv(index=False, encoding='utf-8-sig')
-        
-        st.download_button("📥 Download Report (Excel CSV)", csv, "lusent_leads.csv", "text/csv")
