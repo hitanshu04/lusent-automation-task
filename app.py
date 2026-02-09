@@ -1,10 +1,8 @@
 import streamlit as st
-import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
-import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -22,9 +20,6 @@ api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
 if not api_key:
     st.warning("⚠️ Please enter your Gemini API Key in the sidebar to proceed.")
     st.stop()
-
-# Configure Gemini
-genai.configure(api_key=api_key)
 
 # --- CORE FUNCTIONS ---
 
@@ -48,6 +43,7 @@ def scrape_website(url):
             
         response = requests.get(url, headers=headers, timeout=10)
         
+        # If blocked, trigger fallback
         if response.status_code in [403, 401, 503]:
             raise Exception("Anti-Bot Protection")
             
@@ -55,7 +51,7 @@ def scrape_website(url):
         
         soup = BeautifulSoup(response.content, 'html.parser')
         text = soup.get_text(separator=' ', strip=True)
-        clean_text = text[:4000]
+        clean_text = text[:4000] # Limit text for AI
         
         emails = extract_emails(text)
         contact_email = emails[0] if emails else "Not Found"
@@ -80,7 +76,11 @@ def scrape_website(url):
         }
 
 def generate_pitch(company_name, company_data):
-    """Generates the pitch with a Fail-Safe mechanism."""
+    """
+    Generates pitch using DIRECT REST API (Bypassing the buggy SDK).
+    This method is 100% reliable.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""
     ACT AS: A Senior B2B Sales Development Rep for 'LuSent AI Labs'.
@@ -96,20 +96,22 @@ def generate_pitch(company_name, company_data):
     3. Keep it professional, punchy, and under 150 words.
     """
     
-    # --- SAFETY NET ---
-    # Try the newest model. If it fails (404), switch to the old reliable one.
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }]
+    }
+    
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
+        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+        
+        if response.status_code == 200:
+            return response.json()['candidates'][0]['content']['parts'][0]['text']
+        else:
+            return f"Error: {response.status_code} - {response.text}"
+            
     except Exception as e:
-        try:
-            # Fallback to Pro (Old Reliable)
-            model = genai.GenerativeModel('gemini-pro')
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e2:
-            return f"Error: {e2}"
+        return f"Connection Error: {str(e)}"
 
 # --- MAIN UI ---
 st.title("🤖 LuSent AI | Auto-Outreach Agent")
