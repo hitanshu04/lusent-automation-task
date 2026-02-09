@@ -26,7 +26,10 @@ if not api_key:
 # --- CORE FUNCTIONS ---
 
 def clean_company_name(raw_input):
-    """Cleans URL to get a readable Company Name."""
+    """
+    Cleans URL to get a readable Company Name.
+    Ex: 'https://www.ycombinator.com' -> 'Ycombinator'
+    """
     clean = raw_input.lower().replace("https://", "").replace("http://", "").replace("www.", "")
     clean = clean.split('/')[0].split('.')[0]
     return clean.title()
@@ -80,7 +83,6 @@ def scrape_website(url_or_name):
 def generate_pitch(company_name, company_data, api_key):
     """
     Generates a PERSONALIZED pitch using Gemini Pro.
-    Focus: 'How LuSent AI helps [Company Name]'.
     """
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
     
@@ -93,10 +95,10 @@ def generate_pitch(company_name, company_data, api_key):
     "{company_data['text']}"
     
     INSTRUCTIONS:
-    1. Read the website data. Find ONE specific process they likely struggle with (e.g. support, data entry, hiring).
+    1. Read the website data. Find ONE specific process they likely struggle with.
     2. Write a cold email to the Founder.
-    3. OPENING: Mention a specific detail from their site (e.g. "Saw you just launched X").
-    4. PITCH: "I bet managing [Process] is time-consuming. LuSent AI can automate that."
+    3. OPENING: Mention a specific detail from their site to prove you did research.
+    4. PITCH: Explain how LuSent AI can automate that process.
     5. CTA: "Open to a 10 min demo?"
     6. Sign off: Hitanshu, LuSent AI Labs.
     7. Keep it under 150 words.
@@ -140,7 +142,6 @@ if st.button("🚀 Run AI Agent", type="primary"):
         st.info(f"🔄 Analyzing {len(inputs)} companies...")
         results = []
         
-        # PROGRESS BAR
         prog = st.progress(0)
         
         for i, item in enumerate(inputs):
@@ -158,9 +159,25 @@ if st.button("🚀 Run AI Agent", type="primary"):
             })
             prog.progress((i + 1) / len(inputs))
             
-        st.success("✅ Done!")
+        st.success("✅ Done! Results below:")
         
-        # DISPLAY RESULTS
+        # --- DISPLAY RESULTS (ALWAYS VISIBLE CARDS) ---
         for res in results:
-            with st.expander(f"🏢 {res['Company']} (Click to View)", expanded=True):
+            # Replaced st.expander with st.container(border=True)
+            with st.container(border=True):
+                st.subheader(f"🏢 {res['Company']}")
                 c1, c2 = st.columns([3, 1])
+                
+                with c1:
+                    st.caption("📝 Personalized Pitch (Hover to Copy)")
+                    # ST.CODE GIVES THE COPY BUTTON
+                    st.code(res['Pitch'], language='text') 
+                
+                with c2:
+                    st.caption("⚡ Action")
+                    st.write(f"**Email:** {res['Email']}")
+                    st.link_button("📤 Draft Gmail", res['Link'])
+
+        # CSV EXPORT
+        df = pd.DataFrame(results).drop(columns=['Link'])
+        st.download_button("📥 Download Report (CSV)", df.to_csv(index=False, encoding='utf-8-sig'), "lusent_leads.csv")
