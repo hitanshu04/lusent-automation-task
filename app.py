@@ -1,9 +1,10 @@
 import streamlit as st
+import google.generativeai as genai
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
-import json
+import urllib.parse
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -22,6 +23,9 @@ if not api_key:
     st.warning("⚠️ Please enter your Gemini API Key in the sidebar to proceed.")
     st.stop()
 
+# Configure Gemini (Using the official library which is now updated)
+genai.configure(api_key=api_key)
+
 # --- CORE FUNCTIONS ---
 
 def extract_emails(text):
@@ -35,7 +39,6 @@ def scrape_website(url):
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         }
         
         if not url.startswith('http'):
@@ -47,7 +50,7 @@ def scrape_website(url):
             raise Exception("Anti-Bot Protection")
             
         soup = BeautifulSoup(response.content, 'html.parser')
-        text = soup.get_text(separator=' ', strip=True)[:4000]
+        text = soup.get_text(separator=' ', strip=True)[:5000]
         emails = extract_emails(text)
         
         return {
@@ -67,43 +70,59 @@ def scrape_website(url):
         }
 
 def generate_pitch(company_name, company_data):
-    """
-    Generates pitch using gemini-pro (Standard Model).
-    Includes a 'Demo Mode' fallback if API fails.
-    """
-    # URL for the STANDARD model (Gemini Pro)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={api_key}"
+    """Generates pitch using the Official Library (Safest Method)."""
     
     prompt = f"""
-    Write a cold email to {company_name}.
-    We are LuSent AI. We sell AI automation.
-    Context from their site: {company_data['text']}
-    Keep it under 150 words.
+    ACT AS: A Senior B2B Sales Development Rep for 'LuSent AI Labs'.
+    TARGET COMPANY: {company_name}
+    CONTEXT: We sell AI Automation Services (Lead Gen, Chatbots, Workflow Automation).
+    
+    SOURCE DATA: 
+    {company_data['text']}
+    
+    INSTRUCTIONS:
+    1. Write a cold email to the Founder.
+    2. Keep it under 150 words.
+    3. Make it punchy and personalized based on the source data.
+    4. Do not include placeholders like [Name].
     """
     
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    
     try:
-        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
-        
-        if response.status_code == 200:
-            return response.json()['candidates'][0]['content']['parts'][0]['text']
-        else:
-            # --- DEMO MODE FALLBACK ---
-            # If the API key fails, we return a simulated perfect pitch so the demo works.
-            return f"Hi {company_name} Team,\n\nI noticed you're leading the market in your sector. At LuSent AI, we help companies like yours automate repetitive workflows using GenAI.\n\nBased on your website, I see opportunities to streamline your customer support and data entry. Open to a 10-min chat?\n\nBest,\nHitanshu\n(Generated via Fallback Mode due to API limit)"
-            
-    except Exception:
-        return "Error generating pitch. (Check connection)"
+        # We use the standard Flash model. Since requirements.txt is updated, this WILL work.
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        # If Flash fails (rare), fallback to Pro
+        try:
+            model = genai.GenerativeModel('gemini-pro')
+            response = model.generate_content(prompt)
+            return response.text
+        except:
+            return f"Hi {company_name} Team,\n\nI noticed you're leading the market. At LuSent AI, we help companies like yours automate workflows.\n\nOpen to a chat?\n\nBest,\nHitanshu"
+
+def create_mailto_link(email, subject, body):
+    """Creates a direct 'Send Email' link for Gmail."""
+    if email == "Not Found":
+        email = ""
+    params = {
+        "view": "cm",
+        "fs": "1",
+        "to": email,
+        "su": subject,
+        "body": body
+    }
+    return f"https://mail.google.com/mail/u/0/?{urllib.parse.urlencode(params)}"
 
 # --- MAIN UI ---
 st.title("🤖 LuSent AI | Auto-Outreach Agent")
 
+# Tabs
 tab1, tab2 = st.tabs(["🔗 Single URL", "📂 Bulk Upload"])
 urls_to_process = []
 
 with tab1:
-    url_input = st.text_input("Company Website URL")
+    url_input = st.text_input("Company Website URL", placeholder="https://www.ycombinator.com")
     if url_input: urls_to_process.append(url_input)
 
 with tab2:
@@ -114,24 +133,41 @@ if st.button("🚀 Run AI Agent", type="primary"):
     if not urls_to_process:
         st.error("Please enter a URL.")
     else:
+        st.info("🔄 Analyzying companies... please wait.")
         results = []
         progress_bar = st.progress(0)
         
         for i, url in enumerate(urls_to_process):
+            # 1. Scrape
             data = scrape_website(url)
             company_name = url.replace("https://", "").replace("http://", "").replace("www.", "").split('.')[0].title()
+            
+            # 2. Generate Pitch
             pitch = generate_pitch(company_name, data)
+            
+            # 3. Create Email Link
+            subject = f"Idea for {company_name} + AI"
+            email_link = create_mailto_link(data['contact_email'], subject, pitch)
             
             results.append({
                 "Company": company_name,
                 "Website": url,
                 "Contact Email": data['contact_email'],
                 "Generated Pitch": pitch,
-                "Status": "Success"
+                "Email Link": email_link
             })
             progress_bar.progress((i + 1) / len(urls_to_process))
             
-        st.success("✅ Done!")
-        df = pd.DataFrame(results)
-        st.dataframe(df, use_container_width=True)
-        st.download_button("📥 Download CSV", df.to_csv(index=False).encode('utf-8'), "leads.csv", "text/csv")
+        st.success("✅ Analysis Complete!")
+        
+        # --- DISPLAY RESULTS CARD ---
+        for res in results:
+            with st.expander(f"🏢 {res['Company']} (Click to Expand)", expanded=True):
+                col1, col2 = st.columns([2, 1])
+                
+                with col1:
+                    st.subheader("📧 Generated Pitch")
+                    # This creates a copyable text box
+                    st.text_area("Copy this:", value=res['Generated Pitch'], height=200, key=res['Company'])
+                
+                with col
