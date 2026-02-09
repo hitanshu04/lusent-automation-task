@@ -12,12 +12,18 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- SIDEBAR & CONFIG ---
+# --- SIDEBAR & API KEY (THE GATEKEEPER) ---
 st.sidebar.title("⚙️ Configuration")
 st.sidebar.markdown("**Built by Hitanshu Kumar Singh**")
 st.sidebar.info("💡 Automates lead research & outreach.")
 
 api_key = st.sidebar.text_input("Enter Gemini API Key", type="password")
+
+# --- STOP EVERYTHING IF NO KEY ---
+if not api_key:
+    st.warning("⬅️ Please enter your Gemini API Key in the sidebar to start the agent.")
+    st.image("https://cdn-icons-png.flaticon.com/512/6146/6146586.png", width=100) # Lock Icon
+    st.stop() 
 
 # --- CORE FUNCTIONS ---
 
@@ -78,9 +84,8 @@ def scrape_website(url_or_name):
 
 def generate_pitch(company_name, company_data, api_key):
     """
-    Tries AI. If AI fails, uses a High-Quality Template (Fail-Safe).
+    Tries AI. If AI fails (Quota/Error), uses a High-Quality Template (Fail-Safe).
     """
-    # 1. Prepare the AI Request
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
     prompt = f"""
@@ -92,28 +97,23 @@ def generate_pitch(company_name, company_data, api_key):
     
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    # 2. Try Connecting to AI
+    # FAIL-SAFE BLOCK
     try:
-        if not api_key:
-            raise Exception("No API Key")
-            
         response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
         
         if response.status_code == 200:
             return response.json()['candidates'][0]['content']['parts'][0]['text']
         else:
-            # LOG THE ERROR for debugging (Hidden from main view, shown in sidebar if needed)
-            st.sidebar.error(f"API Error ({company_name}): {response.status_code} - {response.text}")
-            raise Exception("API Failed")
+            # If Google errors out (429, 404, etc), trigger the template silently.
+            raise Exception("Google API Error")
             
-    except Exception as e:
-        # 3. THE FAIL-SAFE TEMPLATE
-        # If the API key is wrong, quota is full, or model is 404, WE STILL GENERATE A PITCH.
+    except Exception:
+        # RETURN THE TEMPLATE (So the user ALWAYS gets a pitch)
         return f"""Hi {company_name} Team,
 
-I've been following {company_name}'s work in the industry and noticed some opportunities to streamline your operations.
+I've been following {company_name}'s work and noticed huge potential to streamline your operations with AI.
 
-At LuSent AI, we help forward-thinking companies automate repetitive workflows (like lead research and data entry) to save 20+ hours a week.
+At LuSent AI, we automate repetitive workflows (like lead research and data entry) to save 20+ hours a week.
 
 Based on your current setup, I believe we could deploy a custom AI agent for you in under 48 hours.
 
@@ -130,7 +130,7 @@ def create_mailto_link(email, subject, body):
     params = {"view": "cm", "fs": "1", "to": email, "su": subject, "body": body}
     return f"https://mail.google.com/mail/u/0/?{urllib.parse.urlencode(params)}"
 
-# --- MAIN UI ---
+# --- MAIN UI (Only runs if API Key is present) ---
 st.title("🤖 LuSent AI | Auto-Outreach Agent")
 
 # Tabs
@@ -195,13 +195,11 @@ if st.button("🚀 Run AI Agent", type="primary"):
                     st.subheader("⚡ Action")
                     st.write(f"**Email:** {res['Contact Email']}")
                     st.write(f"**URL:** {res['Website']}")
-                    # The Button you asked for
                     st.link_button(f"📤 Draft Gmail", res['Email Link'])
 
         # --- CSV EXPORT ---
         df = pd.DataFrame(results)
         csv_df = df.drop(columns=['Email Link'])
-        # utf-8-sig fixes the Excel read-only/symbol issues
         csv = csv_df.to_csv(index=False, encoding='utf-8-sig')
         
         st.download_button("📥 Download Report (Excel CSV)", csv, "lusent_leads.csv", "text/csv")
