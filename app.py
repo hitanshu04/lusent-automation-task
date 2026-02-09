@@ -41,8 +41,9 @@ def extract_emails(text):
     emails = re.findall(email_pattern, text)
     return list(set(emails))
 
+# === BONUS 2: ERROR HANDLING ===
 def scrape_website(url_or_name):
-    """Scrapes URL. Removes Junk. Handles Blockers."""
+    """Scrapes URL. Handles errors gracefully."""
     target_url = url_or_name
     
     # Smart Guesser
@@ -55,12 +56,13 @@ def scrape_website(url_or_name):
         headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(target_url, headers=headers, timeout=10)
         
+        # If blocked, return specific flag instead of crashing
         if response.status_code in [403, 401, 503]:
-            return {"text": "Website Protected.", "emails": "", "contact_email": "Not Found", "real_url": target_url}
+            return {"text": "PROTECTED_MODE", "emails": "", "contact_email": "Not Found", "real_url": target_url}
             
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # REMOVE JUNK (Menus, Footers)
+        # Remove Junk
         for element in soup(['nav', 'header', 'footer', 'script', 'style', 'aside']):
             element.decompose()
             
@@ -74,40 +76,58 @@ def scrape_website(url_or_name):
             "real_url": target_url
         }
     except:
-        return {"text": "Error accessing site.", "emails": "", "contact_email": "Not Found", "real_url": target_url}
+        # Error Handling: Return generic data so app continues
+        return {"text": "PROTECTED_MODE", "emails": "", "contact_email": "Not Found", "real_url": target_url}
 
 def generate_pitch(company_name, company_data):
     """
-    Uses Groq (Llama 3.3) - The NEWEST model.
+    Uses Groq (Llama 3.3).
     """
-    prompt = f"""
-    ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
-    TARGET: {company_name}
-    CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
-    WEBSITE DATA: "{company_data['text'][:3000]}"
+    # CASE 1: Website Scraped Successfully
+    if company_data['text'] != "PROTECTED_MODE":
+        prompt = f"""
+        ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
+        TARGET: {company_name}
+        CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
+        WEBSITE DATA: "{company_data['text'][:3000]}"
+        
+        STRICT RULES:
+        1. Output ONLY the email body. NO Subject. NO "Here is the email".
+        2. Start with "Hi {company_name} Team,".
+        3. Mention a specific detail from the WEBSITE DATA.
+        4. Pitch: "I bet managing [Process] is manual. LuSent AI can automate it."
+        5. CTA: "Open to a 10 min demo?"
+        6. Sign off: Best, Hitanshu, LuSent AI Labs.
+        """
     
-    INSTRUCTIONS:
-    1. Analyze the website data. Find ONE likely operational bottleneck.
-    2. Write a cold email to the Founder.
-    3. OPENING: Mention a specific phrase or goal found in the website data.
-    4. PITCH: "I bet managing [Process] is manual. LuSent AI can automate it."
-    5. CTA: "Open to a 10 min demo?"
-    6. Sign off: Hitanshu, LuSent AI Labs.
-    7. Keep it under 150 words.
-    """
+    # CASE 2: Website Blocked (Error Handling Strategy)
+    else:
+        prompt = f"""
+        ACT AS: A Senior B2B Sales Rep for 'LuSent AI'.
+        TARGET: {company_name}
+        CONTEXT: We sell AI Automation (Lead Gen, Chatbots).
+        
+        CRITICAL: Do NOT mention you couldn't access their website.
+        
+        STRICT RULES:
+        1. Output ONLY the email body. NO Subject.
+        2. Start with "Hi {company_name} Team,".
+        3. Say: "I've been following {company_name}'s growth in the industry."
+        4. Pitch: "Scaling operations often brings manual bottlenecks. LuSent AI automates workflows to save 20+ hours/week."
+        5. CTA: "Open to a 10 min demo?"
+        6. Sign off: Best, Hitanshu, LuSent AI Labs.
+        """
     
     try:
         completion = client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
-            # UPDATED MODEL NAME HERE:
             model="llama-3.3-70b-versatile", 
         )
-        return completion.choices[0].message.content
+        return completion.choices[0].message.content.strip()
     except Exception as e:
         return f"Error: {str(e)}"
 
 def create_mailto_link(email, subject, body):
-    """Creates a clickable mailto link."""
     if email == "Not Found": email = ""
     params = {"view": "cm", "fs": "1", "to": email, "su": subject, "body": body}
     return f"https://mail.google.com/mail/u/0/?{urllib.parse.urlencode(params)}"
@@ -115,6 +135,7 @@ def create_mailto_link(email, subject, body):
 # --- MAIN UI ---
 st.title("🤖 LuSent AI | Auto-Outreach Agent")
 
+# === BONUS 3: MULTIPLE INPUTS ===
 tab1, tab2 = st.tabs(["🔗 Single Input", "📂 Bulk Upload"])
 inputs = []
 
@@ -146,9 +167,9 @@ if st.button("🚀 Run AI Agent", type="primary"):
             
             results.append({
                 "Company": name,
-                "URL": data['real_url'],
+                "Website": data['real_url'],
                 "Email": data['contact_email'],
-                "Pitch": pitch,
+                "Generated Pitch": pitch,
                 "Link": link
             })
             prog.progress((i + 1) / len(inputs))
@@ -162,13 +183,21 @@ if st.button("🚀 Run AI Agent", type="primary"):
                 c1, c2 = st.columns([3, 1])
                 with c1:
                     st.caption("📝 Pitch")
-                    st.code(res['Pitch'], language='text')
+                    st.code(res['Generated Pitch'], language='text')
                 with c2:
                     st.caption("⚡ Action")
                     st.write(f"**Email:** {res['Email']}")
                     st.link_button("📤 Draft Gmail", res['Link'])
         
-        # CSV Export
+        # === BONUS 1: CSV EXPORT (Fixed for Excel) ===
         df = pd.DataFrame(results).drop(columns=['Link'])
-        df['Pitch'] = df['Pitch'].apply(lambda x: x.replace('\n', '  '))
-        st.download_button("📥 Download CSV", df.to_csv(index=False).encode('utf-8'), "lusent_leads.csv")
+        
+        # CLEANING: Replace Newlines with ' || ' so it stays in one cell in Excel
+        df['Generated Pitch'] = df['Generated Pitch'].apply(lambda x: x.replace('\n', ' || '))
+        
+        st.download_button(
+            label="📥 Download Report (CSV)",
+            data=df.to_csv(index=False).encode('utf-8'),
+            file_name="lusent_leads.csv",
+            mime="text/csv"
+        )
